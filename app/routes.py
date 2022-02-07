@@ -26,7 +26,7 @@ from flask import jsonify, make_response, request, redirect, render_template, \
     send_file, session, url_for, g
 from requests import exceptions, get
 from requests.models import PreparedRequest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 # Load DDG bang json files only on init
 bang_json = json.load(open(app.config['BANG_FILE'])) or {}
@@ -67,8 +67,7 @@ def auth_required(f):
 def session_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if (valid_user_session(session) and
-                'cookies_disabled' not in request.args):
+        if (valid_user_session(session) and not g.cookies_disabled):
             g.session_key = session['key']
         else:
             session.pop('_permanent', None)
@@ -110,6 +109,13 @@ def before_request_func():
         request.args if request.method == 'GET' else request.form
     )
 
+    # Disable cookies if included in request args or for requests sent
+    # for the user by the browser
+    g.cookies_disabled = (
+        'cookies_disabled' in request.args or
+        request.headers.get('Sec-Fetch-Site') != 'same-origin'
+    )
+
     # Skip pre-request actions if verifying session
     if '/session' in request.path and not valid_user_session(session):
         return
@@ -118,8 +124,7 @@ def before_request_func():
         if os.path.exists(app.config['DEFAULT_CONFIG']) else {}
 
     # Generate session values for user if unavailable
-    if (not valid_user_session(session) and
-            'cookies_disabled' not in request.args):
+    if (not valid_user_session(session) and not g.cookies_disabled):
         session['config'] = default_config
         session['uuid'] = str(uuid.uuid4())
         session['key'] = generate_user_key()
@@ -135,7 +140,7 @@ def before_request_func():
                 follow=get_request_url(request.url)), code=307)
         else:
             g.user_config = Config(**session['config'])
-    elif 'cookies_disabled' not in request.args:
+    elif not g.cookies_disabled:
         # Set session as permanent
         session.permanent = True
         app.permanent_session_lifetime = timedelta(days=365)
@@ -302,7 +307,7 @@ def search():
     g.user_config = g.user_config.from_params(g.request_params)
 
     search_util = Search(request, g.user_config, g.session_key)
-    query = search_util.new_search_query()
+    query = search_util.new_search_query(g.session_key)
 
     bang = resolve_bang(query=query, bangs_dict=bang_json)
     if bang != '':
@@ -457,8 +462,15 @@ def imgres():
 @session_required
 @auth_required
 def element():
-    cipher_suite = Fernet(g.session_key)
-    src_url = cipher_suite.decrypt(request.args.get('url').encode()).decode()
+    cipher_suite_session = Fernet(g.session_key)
+
+    try:
+        src_url = Fernet(g.session_key).decrypt(
+            request.args.get('url').encode()).decode()
+    except InvalidToken:
+        src_url = Fernet(app.default_key).decrypt(
+            request.args.get('url').encode()).decode()
+
     src_type = request.args.get('type')
 
     try:

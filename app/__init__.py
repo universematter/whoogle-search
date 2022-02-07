@@ -21,7 +21,8 @@ if os.getenv('WHOOGLE_DOTENV', ''):
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              dotenv_path))
 
-app.default_key = generate_user_key()
+default_key = generate_user_key()
+app.default_key = default_key
 app.config['SECRET_KEY'] = os.urandom(32)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_COOKIE_SAMESITE'] = 'strict'

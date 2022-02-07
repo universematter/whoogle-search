@@ -78,7 +78,7 @@ class Search:
     def __contains__(self, name) -> bool:
         return hasattr(self, name)
 
-    def new_search_query(self) -> str:
+    def new_search_query(self, key) -> str:
         """Parses a plaintext query into a valid string for submission
 
         Also decrypts the query string, if encrypted (in the case of
@@ -88,6 +88,8 @@ class Search:
             str: A valid query string
 
         """
+        from app import default_key as fallback_key
+
         q = self.request_params.get('q')
 
         if q is None or len(q) == 0:
@@ -95,8 +97,11 @@ class Search:
         else:
             # Attempt to decrypt if this is an internal link
             try:
-                q = Fernet(self.session_key).decrypt(q.encode()).decode()
+                q = Fernet(key).decrypt(q.encode()).decode()
             except InvalidToken:
+                # Use default app key as fallback
+                if key != fallback_key:
+                    return self.new_search_query(fallback_key)
                 pass
 
         # Strip leading '! ' for "feeling lucky" queries
